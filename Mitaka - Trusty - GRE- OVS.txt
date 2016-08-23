@@ -1,0 +1,294 @@
+Install Guide OpenStack Mitaka - GRE + Open vSwich
+
+-- General --
+
+1.- Configure Network Interfaces
+
+Configure the first interface as the management interface:
+
+IP address: 10.0.0.11
+
+Network mask: 255.255.255.0 (or /24)
+
+Default gateway: 10.0.0.1
+
+2.- The provider interface uses a special configuration without an IP address assigned to it. Configure the second interface as the provider interface:
+
+Replace INTERFACE_NAME with the actual interface name. For example, eth1 or ens224.
+
+    Edit the /etc/network/interfaces file to contain the following:
+
+    # The provider network interface
+    auto INTERFACE_NAME
+    iface INTERFACE_NAME inet manual
+    up ip link set dev $IFACE up
+    down ip link set dev $IFACE down
+
+3.- Configure name resolution
+
+Edit the /etc/hosts file to contain the following:
+
+# controller
+10.0.0.11       controller
+
+# compute1
+10.0.0.31       compute1
+
+# block1
+10.0.0.41       block1
+
+# object1
+10.0.0.51       object1
+
+# object2
+10.0.0.52       object2
+
+
+Warning
+
+Some distributions add an extraneous entry in the /etc/hosts file that resolves the actual hostname to another loopback IP address such as 127.0.1.1. You must comment out or remove this entry to prevent name resolution problems. Do not remove the 127.0.0.1 entry.
+
+$ vi /etc/hosts
+
+#127.0.1.1		controller
+
+4.- Verify connectivity:
+
+$ ping -c 4 openstack.org
+PING openstack.org (162.242.140.107) 56(84) bytes of data.
+64 bytes from 162.242.140.107: icmp_seq=1 ttl=50 time=131 ms
+64 bytes from 162.242.140.107: icmp_seq=2 ttl=50 time=131 ms
+64 bytes from 162.242.140.107: icmp_seq=3 ttl=50 time=131 ms
+64 bytes from 162.242.140.107: icmp_seq=4 ttl=50 time=131 ms
+
+--- openstack.org ping statistics ---
+4 packets transmitted, 4 received, 0% packet loss, time 3004ms
+rtt min/avg/max/mdev = 131.509/131.549/131.598/0.258 ms
+
+5.- Configure NTP (Controller)
+
+$ apt-get install chrony
+
+6.- Edit the /etc/chrony/chrony.conf file and add, change, or remove the following keys as necessary for your environment:
+
+server pool.ntp.org iburst
+
+7.- Restart the NTP service:
+
+$ # service chrony restart
+
+8.- Verify NTP operation:
+
+$ chronyc sources
+
+9.- Enable the OpenStack repository
+
+$ apt-get install software-properties-common
+
+$ add-apt-repository cloud-archive:mitaka
+
+10.- Finalize basic packages installation:
+
+$ apt-get update && apt-get dist-upgrade
+
+-- Controller --
+
+11.- Install the OpenStack client:
+
+$ apt-get install python-openstackclient
+
+12.- Install OpenStack database (SQL) components:
+
+$ apt-get install mariadb-server python-pymysql
+
+13.- Create and edit the /etc/mysql/conf.d/openstack.cnf file and complete the following actions:
+
+* In the [mysqld] section, set the bind-address key to the management IP address of the controller node to enable access by other nodes via the management network:
+
+[mysqld]
+bind-address = 10.0.0.11
+
+* In the same [mysqld] section, set the following keys to enable useful options and the UTF-8 character set:
+
+[mysqld]
+...
+default-storage-engine = innodb
+innodb_file_per_table
+max_connections = 4096
+collation-server = utf8_general_ci
+character-set-server = utf8
+
+14.- Restart OpenStack database installation:
+
+$ service mysql restart
+
+15.- Secure database connection:
+
+$ mysql_secure_installation
+
+16.- Install OpenStack NoSQL database for telemetry:
+
+$ apt-get install mongodb-server mongodb-clients python-pymongo
+
+17.- Edit the /etc/mongodb.conf file and complete the following actions:
+
+* Configure the bind_ip key to use the management interface IP address of the controller node.
+
+bind_ip = 10.0.0.11
+
+* By default, MongoDB creates several 1 GB journal files in the /var/lib/mongodb/journal directory. If you want to reduce the size of each journal file to 128 MB and limit total journal space consumption to 512 MB, assert the smallfiles key:
+
+smallfiles = true
+
+18.- Finalize NoSQL database installation:
+
+$ service mongodb stop
+$ rm /var/lib/mongodb/journal/prealloc.*
+$ service mongodb start
+
+19.- Install the Message Queue:
+
+$ apt-get install rabbitmq-server
+
+20.- Add the openstack user:
+
+$ rabbitmqctl add_user openstack RABBIT_PASS
+Creating user "openstack" ...
+...done.
+
+21.- Permit configuration, write, and read access for the openstack user:
+
+$ rabbitmqctl set_permissions openstack ".*" ".*" ".*"
+Setting permissions for user "openstack" in vhost "/" ...
+...done.
+
+22.- Install Memcache:
+
+$ apt-get install memcached python-memcache
+
+23.- Configure Memcache:
+
+Edit the /etc/memcached.conf file and configure the service to use the management IP address of the controller node to enable access by other nodes via the management network:
+
+-l 10.0.0.11
+
+24.- Finalize Memcache installation:
+
+$ service memcached restart
+
+-- Keystone - Identity Service --
+
+25.- Create Keystone database:
+
+* Use the database access client to connect to the database server as the root user:
+
+$ mysql -u root -p
+
+* Create the keystone database:
+
+> CREATE DATABASE keystone;
+
+* Grant proper access to the keystone database:
+
+> GRANT ALL PRIVILEGES ON keystone.* TO 'keystone'@'localhost' IDENTIFIED BY 'KEYSTONE_DBPASS';
+> GRANT ALL PRIVILEGES ON keystone.* TO 'keystone'@'%' IDENTIFIED BY 'KEYSTONE_DBPASS';
+
+* Exit the database access client:
+
+> exit
+
+26.- Generate a random value to use as the administration token during initial configuration:
+
+$ openssl rand -hex 10
+0538fbb20f023c045044
+
+27.- Disable the keystone service from starting automatically after installation:
+
+$ echo "manual" > /etc/init/keystone.override
+
+28.- Install keystone packages:
+
+$ apt-get install keystone apache2 libapache2-mod-wsgi
+
+29.- Edit the /etc/keystone/keystone.conf file and complete the following actions:
+
+* In the [DEFAULT] section, define the value of the initial administration token:
+
+[DEFAULT]
+...
+admin_token = ADMIN_TOKEN
+
+* In the [database] section, configure database access:
+
+[database]
+...
+connection = mysql+pymysql://keystone:KEYSTONE_DBPASS@controller/keystone
+
+* In the [token] section, configure the Fernet token provider:
+
+[token]
+...
+provider = fernet
+
+30.- Populate the Identity service database:
+
+$ su -s /bin/sh -c "keystone-manage db_sync" keystone
+
+31.- Initialize Fernet keys:
+
+$ keystone-manage fernet_setup --keystone-user keystone --keystone-group keystone
+
+32.- Configure the Apache HTTP Server by editing /etc/apache2/apache2.conf and configuring the ServerName option to reference the controller node:
+
+ServerName controller
+
+33.- Create the /etc/apache2/sites-available/wsgi-keystone.conf file with the following content:
+
+Listen 5000
+Listen 35357
+
+<VirtualHost *:5000>
+    WSGIDaemonProcess keystone-public processes=5 threads=1 user=keystone group=keystone display-name=%{GROUP}
+    WSGIProcessGroup keystone-public
+    WSGIScriptAlias / /usr/bin/keystone-wsgi-public
+    WSGIApplicationGroup %{GLOBAL}
+    WSGIPassAuthorization On
+    ErrorLogFormat "%{cu}t %M"
+    ErrorLog /var/log/apache2/keystone.log
+    CustomLog /var/log/apache2/keystone_access.log combined
+
+    <Directory /usr/bin>
+        Require all granted
+    </Directory>
+</VirtualHost>
+
+<VirtualHost *:35357>
+    WSGIDaemonProcess keystone-admin processes=5 threads=1 user=keystone group=keystone display-name=%{GROUP}
+    WSGIProcessGroup keystone-admin
+    WSGIScriptAlias / /usr/bin/keystone-wsgi-admin
+    WSGIApplicationGroup %{GLOBAL}
+    WSGIPassAuthorization On
+    ErrorLogFormat "%{cu}t %M"
+    ErrorLog /var/log/apache2/keystone.log
+    CustomLog /var/log/apache2/keystone_access.log combined
+
+    <Directory /usr/bin>
+        Require all granted
+    </Directory>
+</VirtualHost>
+
+34.- Enable the Identity service virtual hosts:
+
+$ ln -s /etc/apache2/sites-available/wsgi-keystone.conf /etc/apache2/sites-enabled
+
+35.- Restart the Apache HTTP server:
+
+$ service apache2 restart
+
+36.- By default, the Ubuntu packages create an SQLite database, but this configuration uses an SQL database server, so you can remove the SQLite database file:
+
+$ rm -f /var/lib/keystone/keystone.db
+
+37.- Configure the authentication token:
+
+$ export OS_TOKEN=ADMIN_TOKEN
