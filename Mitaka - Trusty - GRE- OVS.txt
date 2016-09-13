@@ -485,3 +485,207 @@ $ openstack image create "cirros" --file cirros-0.3.4-x86_64-disk.img --disk-for
 
 $ openstack image list
 
+-- Nova - Compute Service (Controller Node) --
+
+57.- Create the nova database:
+
+$ mysql -u root -p
+
+> CREATE DATABASE nova_api;
+
+> CREATE DATABASE nova;
+
+> GRANT ALL PRIVILEGES ON nova_api.* TO 'nova'@'localhost' IDENTIFIED BY 'NOVA_DBPASS';
+
+> GRANT ALL PRIVILEGES ON nova_api.* TO 'nova'@'%' IDENTIFIED BY 'NOVA_DBPASS';
+
+> GRANT ALL PRIVILEGES ON nova.* TO 'nova'@'localhost' IDENTIFIED BY 'NOVA_DBPASS';
+
+> GRANT ALL PRIVILEGES ON nova.* TO 'nova'@'%' IDENTIFIED BY 'NOVA_DBPASS';
+
+58.- Create the service credentials:
+
+$ openstack user create --domain default --password-prompt nova
+
+59.- Add the admin role to the nova user:
+
+$ openstack role add --project service --user nova admin
+
+60.- Create the nova service entity:
+
+$ openstack service create --name nova --description "OpenStack Compute" compute
+
+61.- Create the Compute service API endpoints:
+
+$ openstack endpoint create --region RegionOne compute public http://controller:8774/v2.1/%\(tenant_id\)s
+
+$ openstack endpoint create --region RegionOne compute internal http://controller:8774/v2.1/%\(tenant_id\)s
+
+$ openstack endpoint create --region RegionOne compute admin http://controller:8774/v2.1/%\(tenant_id\)s
+
+62.- Install the packages:
+
+$ apt-get install nova-api nova-conductor nova-consoleauth nova-novncproxy nova-scheduler
+
+63.- Edit the /etc/nova/nova.conf file and complete the following actions:
+
+In the [DEFAULT] section, enable only the compute and metadata APIs:
+
+[DEFAULT]
+...
+enabled_apis = osapi_compute,metadata
+
+In the [api_database] and [database] sections, configure database access:
+
+[api_database]
+...
+connection = mysql+pymysql://nova:NOVA_DBPASS@controller/nova_api
+
+[database]
+...
+connection = mysql+pymysql://nova:NOVA_DBPASS@controller/nova
+
+In the [DEFAULT] and [oslo_messaging_rabbit] sections, configure RabbitMQ message queue access:
+
+[DEFAULT]
+...
+rpc_backend = rabbit
+
+[oslo_messaging_rabbit]
+...
+rabbit_host = controller
+rabbit_userid = openstack
+rabbit_password = RABBIT_PASS
+
+In the [DEFAULT] and [keystone_authtoken] sections, configure Identity service access:
+
+[DEFAULT]
+...
+auth_strategy = keystone
+
+[keystone_authtoken]
+...
+auth_uri = http://controller:5000
+auth_url = http://controller:35357
+memcached_servers = controller:11211
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+project_name = service
+username = nova
+password = NOVA_PASS
+
+In the [DEFAULT] section, configure the my_ip option to use the management interface IP address of the controller node:
+
+[DEFAULT]
+...
+my_ip = 10.0.0.11
+
+In the [DEFAULT] section, enable support for the Networking service:
+
+[DEFAULT]
+...
+use_neutron = True
+firewall_driver = nova.virt.firewall.NoopFirewallDriver
+
+In the [vnc] section, configure the VNC proxy to use the management interface IP address of the controller node:
+
+[vnc]
+...
+vncserver_listen = $my_ip
+vncserver_proxyclient_address = $my_ip
+
+In the [glance] section, configure the location of the Image service API:
+
+[glance]
+...
+api_servers = http://controller:9292
+
+In the [oslo_concurrency] section, configure the lock path:
+
+[oslo_concurrency]
+...
+lock_path = /var/lib/nova/tmp
+
+64.- Populate the Compute databases:
+
+$ su -s /bin/sh -c "nova-manage api_db sync" nova
+
+$ su -s /bin/sh -c "nova-manage db sync" nova
+
+65.- Restart the Compute services:
+
+$ service nova-api restart
+
+$ service nova-consoleauth restart
+
+$ service nova-scheduler restart
+
+$ service nova-conductor restart
+
+$ service nova-novncproxy restart
+
+-- Nova - Compute Service (Compute Node) --
+
+66.- Install the packages:
+
+$ apt-get install nova-compute
+
+67.- Edit the /etc/nova/nova.conf file and complete the following actions:
+
+In the [DEFAULT] and [oslo_messaging_rabbit] sections, configure RabbitMQ message queue access:
+
+[DEFAULT]
+...
+auth_strategy = keystone
+
+[keystone_authtoken]
+...
+auth_uri = http://controller:5000
+auth_url = http://controller:35357
+memcached_servers = controller:11211
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+project_name = service
+username = nova
+password = NOVA_PASS
+
+In the [DEFAULT] section, configure the my_ip option:
+
+[DEFAULT]
+...
+my_ip = MANAGEMENT_INTERFACE_IP_ADDRESS
+
+In the [DEFAULT] section, enable support for the Networking service:
+
+[DEFAULT]
+...
+use_neutron = True
+firewall_driver = nova.virt.firewall.NoopFirewallDriver
+
+In the [vnc] section, enable and configure remote console access:
+
+[vnc]
+...
+enabled = True
+vncserver_listen = 0.0.0.0
+vncserver_proxyclient_address = $my_ip
+novncproxy_base_url = http://controller:6080/vnc_auto.html
+
+68.- Determine whether your compute node supports hardware acceleration for virtual machines:
+
+If this command returns a value of one or greater, your compute node supports hardware acceleration which typically requires no additional configuration.
+
+If this command returns a value of zero, your compute node does not support hardware acceleration and you must configure libvirt to use QEMU instead of KVM.
+
+Edit the [libvirt] section in the /etc/nova/nova-compute.conf file as follows:
+
+[libvirt]
+...
+virt_type = qemu
+
+69.- Restart the Compute service:
+
+$ service nova-compute restart
+
