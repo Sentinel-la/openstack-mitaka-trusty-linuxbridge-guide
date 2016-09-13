@@ -374,3 +374,114 @@ $ . admin-openrc
 47.- Request an authentication token:
 
 $ openstack token issue
+
+-- Glance - Image Service --
+
+48.- Create the glance database:
+
+$ mysql -u root -p
+
+> CREATE DATABASE glance;
+
+> GRANT ALL PRIVILEGES ON glance.* TO 'glance'@'localhost' IDENTIFIED BY 'GLANCE_DBPASS';
+
+> GRANT ALL PRIVILEGES ON glance.* TO 'glance'@'%' IDENTIFIED BY 'GLANCE_DBPASS';
+
+49.- Create the glance user in keystone and give it admin role:
+
+$ openstack user create --domain default --password-prompt glance
+
+$ openstack role add --project service --user glance admin
+
+50.- Create the Glance service entity:
+
+$ openstack service create --name glance --description "OpenStack Image" image
+
+51.- Create the Image service API endpoints:
+
+$ openstack endpoint create --region RegionOne image public http://controller:9292
+
+$ openstack endpoint create --region RegionOne image internal http://controller:9292
+
+$ openstack endpoint create --region RegionOne image admin http://controller:9292
+
+52.- Install the glance packages:
+
+$ apt-get install glance
+
+53.- Edit the /etc/glance/glance-api.conf file and complete the following actions:
+
+In the [database] section, configure database access, by commenting :
+
+[database]
+...
+connection = mysql+pymysql://glance:GLANCE_DBPASS@controller/glance
+
+In the [keystone_authtoken] and [paste_deploy] sections, configure Identity service access:
+
+[keystone_authtoken]
+...
+auth_uri = http://controller:5000
+auth_url = http://controller:35357
+memcached_servers = controller:11211
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+project_name = service
+username = glance
+password = GLANCE_PASS
+
+[paste_deploy]
+...
+flavor = keystone
+
+In the [glance_store] section, configure the local file system store and location of image files:
+
+[glance_store]
+...
+stores = file,http
+default_store = file
+filesystem_store_datadir = /var/lib/glance/images/
+
+Edit the /etc/glance/glance-registry.conf file and complete the following actions:
+
+[database]
+...
+connection = mysql+pymysql://glance:GLANCE_DBPASS@controller/glance
+
+In the [keystone_authtoken] and [paste_deploy] sections, configure Identity service access:
+
+[keystone_authtoken]
+...
+auth_uri = http://controller:5000
+auth_url = http://controller:35357
+memcached_servers = controller:11211
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+project_name = service
+username = glance
+password = GLANCE_PASS
+
+[paste_deploy]
+...
+flavor = keystone
+
+54.- Populate the Image service database:
+
+$ su -s /bin/sh -c "glance-manage db_sync" glance
+
+55.- Restart the Image services:
+
+$ service glance-registry restart
+
+$ service glance-api restart
+
+56.- Test image creation:
+
+$ wget http://download.cirros-cloud.net/0.3.4/cirros-0.3.4-x86_64-disk.img
+
+$ openstack image create "cirros" --file cirros-0.3.4-x86_64-disk.img --disk-format qcow2 --container-format bare --public
+
+$ openstack image list
+
