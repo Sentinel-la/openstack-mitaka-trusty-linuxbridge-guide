@@ -1,4 +1,4 @@
-Install Guide OpenStack Mitaka - GRE + Open vSwich
+Install Guide OpenStack Mitaka - Linux Bridge
 
 -- General --
 
